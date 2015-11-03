@@ -82,24 +82,11 @@ func prePushRef(left, right string) {
 		totalSize += p.Size
 	}
 
-	// Objects to skip because they're missing locally but on server
-	var skipObjects map[string]struct{}
-
-	if !prePushDryRun {
-		// Do this as a pre-flight check since upload queue starts immediately
-		skipObjects = prePushCheckForMissingObjects(pointers)
-	}
-
 	uploadQueue := lfs.NewUploadQueue(len(pointers), totalSize, prePushDryRun)
 
 	for _, pointer := range pointers {
 		if prePushDryRun {
 			Print("push %s => %s", pointer.Oid, pointer.Name)
-			continue
-		}
-
-		if _, skip := skipObjects[pointer.Oid]; skip {
-			// object missing locally but on server, don't bother
 			continue
 		}
 
@@ -132,41 +119,6 @@ func prePushRef(left, right string) {
 		}
 	}
 
-}
-
-func prePushCheckForMissingObjects(pointers []*lfs.WrappedPointer) (objectsOnServer map[string]struct{}) {
-	var missingLocalObjects []*lfs.WrappedPointer
-	var missingSize int64
-	var skipObjects = make(map[string]struct{}, len(pointers))
-	for _, pointer := range pointers {
-		if !lfs.ObjectExistsOfSize(pointer.Oid, pointer.Size) {
-			// We think we need to push this but we don't have it
-			// Store for server checking later
-			missingLocalObjects = append(missingLocalObjects, pointer)
-			missingSize += pointer.Size
-		}
-	}
-	if len(missingLocalObjects) == 0 {
-		return nil
-	}
-
-	checkQueue := lfs.NewDownloadCheckQueue(len(missingLocalObjects), missingSize, true)
-	for _, p := range missingLocalObjects {
-		checkQueue.Add(lfs.NewDownloadCheckable(p))
-	}
-	// this channel is filled with oids for which Check() succeeded & Transfer() was called
-	transferc := checkQueue.Watch()
-	done := make(chan int)
-	go func() {
-		for oid := range transferc {
-			skipObjects[oid] = struct{}{}
-		}
-		done <- 1
-	}()
-	// Currently this is needed to flush the batch but is not enough to sync transferc completely
-	checkQueue.Wait()
-	<-done
-	return skipObjects
 }
 
 // decodeRefs pulls the sha1s out of the line read from the pre-push

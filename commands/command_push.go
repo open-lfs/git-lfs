@@ -79,17 +79,10 @@ func uploadPointers(pointers []*lfs.WrappedPointer) *lfs.TransferQueue {
 		totalSize += p.Size
 	}
 
-	skipObjects := prePushCheckForMissingObjects(pointers)
-
 	uploadQueue := lfs.NewUploadQueue(len(pointers), totalSize, pushDryRun)
 	for i, pointer := range pointers {
 		if pushDryRun {
 			Print("push %s => %s", pointer.Oid, pointer.Name)
-			continue
-		}
-
-		if _, skip := skipObjects[pointer.Oid]; skip {
-			// object missing locally but on server, don't bother
 			continue
 		}
 

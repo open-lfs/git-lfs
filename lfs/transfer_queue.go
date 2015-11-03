@@ -28,7 +28,6 @@ type TransferQueue struct {
 	transferables map[string]Transferable
 	transferc     chan Transferable // Channel for processing transfers
 	errorc        chan error        // Channel for processing errors
-	watchers      []chan string
 	errorwait     sync.WaitGroup
 	wait          sync.WaitGroup
 }
@@ -68,20 +67,8 @@ func (q *TransferQueue) Wait() {
 	close(q.transferc)
 	close(q.errorc)
 
-	for _, watcher := range q.watchers {
-		close(watcher)
-	}
-
 	q.meter.Finish()
 	q.errorwait.Wait()
-}
-
-// Watch returns a channel where the queue will write the OID of each transfer
-// as it completes. The channel will be closed when the queue finishes processing.
-func (q *TransferQueue) Watch() chan string {
-	c := make(chan string, batchSize)
-	q.watchers = append(q.watchers, c)
-	return c
 }
 
 // This goroutine collects errors returned from transfers
@@ -101,11 +88,6 @@ func (q *TransferQueue) transferWorker() {
 
 		if err := transfer.Transfer(cb); err != nil {
 				q.errorc <- err
-		} else {
-			oid := transfer.Oid()
-			for _, c := range q.watchers {
-				c <- oid
-			}
 		}
 
 		q.meter.FinishTransfer(transfer.Name())
