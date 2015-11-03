@@ -13,8 +13,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
-
+	
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	
+	"github.com/github/git-lfs/git"
+	
 	"github.com/github/git-lfs/vendor/_nuts/github.com/rubyist/tracerx"
 )
 
@@ -104,31 +110,6 @@ func (e *ClientError) Error() string {
 	return msg
 }
 
-func Download(oid string) (io.ReadCloser, int64, error) {
-	req, err := newApiRequest("GET", oid)
-	if err != nil {
-		return nil, 0, Error(err)
-	}
-
-	res, obj, err := doLegacyApiRequest(req)
-	if err != nil {
-		return nil, 0, err
-	}
-	LogTransfer("lfs.api.download", res)
-	req, err = obj.NewRequest("download", "GET")
-	if err != nil {
-		return nil, 0, Error(err)
-	}
-
-	res, err = doStorageRequest(req)
-	if err != nil {
-		return nil, 0, err
-	}
-	LogTransfer("lfs.data.download", res)
-
-	return res.Body, res.ContentLength, nil
-}
-
 type byteCloser struct {
 	*bytes.Reader
 }
@@ -177,56 +158,7 @@ func Batch(objects []*objectResource, operation string) ([]*objectResource, erro
 		return nil, nil
 	}
 
-	o := map[string]interface{}{"objects": objects, "operation": operation}
-
-	by, err := json.Marshal(o)
-	if err != nil {
-		return nil, Error(err)
-	}
-
-	req, err := newBatchApiRequest(operation)
-	if err != nil {
-		return nil, Error(err)
-	}
-
-	req.Header.Set("Content-Type", mediaType)
-	req.Header.Set("Content-Length", strconv.Itoa(len(by)))
-	req.ContentLength = int64(len(by))
-	req.Body = &byteCloser{bytes.NewReader(by)}
-
-	tracerx.Printf("api: batch %d files", len(objects))
-
-	res, objs, err := doApiBatchRequest(req)
-	if err != nil {
-		if res == nil {
-			return nil, newRetriableError(err)
-		}
-
-		if res.StatusCode == 0 {
-			return nil, newRetriableError(err)
-		}
-
-		if IsAuthError(err) {
-			Config.SetAccess("basic")
-			tracerx.Printf("api: batch not authorized, submitting with auth")
-			return Batch(objects, operation)
-		}
-
-		switch res.StatusCode {
-		case 404, 410:
-			tracerx.Printf("api: batch not implemented: %d", res.StatusCode)
-			return nil, newNotImplementedError(nil)
-		}
-
-		tracerx.Printf("api error: %s", err)
-	}
-	LogTransfer("lfs.api.batch", res)
-
-	if res.StatusCode != 200 {
-		return nil, Error(fmt.Errorf("Invalid status for %s %s: %d", req.Method, req.URL, res.StatusCode))
-	}
-
-	return objs, nil
+	return objects, nil
 }
 
 func UploadCheck(oidPath string) (*objectResource, error) {
@@ -237,48 +169,9 @@ func UploadCheck(oidPath string) (*objectResource, error) {
 		return nil, Error(err)
 	}
 
-	reqObj := &objectResource{
+	obj := &objectResource{
 		Oid:  oid,
 		Size: stat.Size(),
-	}
-
-	by, err := json.Marshal(reqObj)
-	if err != nil {
-		return nil, Error(err)
-	}
-
-	req, err := newApiRequest("POST", oid)
-	if err != nil {
-		return nil, Error(err)
-	}
-
-	req.Header.Set("Content-Type", mediaType)
-	req.Header.Set("Content-Length", strconv.Itoa(len(by)))
-	req.ContentLength = int64(len(by))
-	req.Body = &byteCloser{bytes.NewReader(by)}
-
-	tracerx.Printf("api: uploading (%s)", oid)
-	res, obj, err := doLegacyApiRequest(req)
-	if err != nil {
-		if IsAuthError(err) {
-			Config.SetAccess("basic")
-			tracerx.Printf("api: upload check not authorized, submitting with auth")
-			return UploadCheck(oidPath)
-		}
-
-		return nil, newRetriableError(err)
-	}
-	LogTransfer("lfs.api.upload", res)
-
-	if res.StatusCode == 200 {
-		return nil, nil
-	}
-
-	if obj.Oid == "" {
-		obj.Oid = oid
-	}
-	if obj.Size == 0 {
-		obj.Size = reqObj.Size
 	}
 
 	return obj, nil
@@ -290,81 +183,34 @@ func UploadObject(o *objectResource, cb CopyCallback) error {
 		return Error(err)
 	}
 
+	fmt.Fprintf(os.Stderr, "Going to upload %s ...\n", o.Oid)
+
 	file, err := os.Open(path)
 	if err != nil {
 		return Error(err)
 	}
 	defer file.Close()
 
-	reader := &CallbackReader{
-		C:         cb,
-		TotalSize: o.Size,
-		Reader:    file,
-	}
+	var bucket =  git.Config.Find("filter.lfs.s3.bucket")
+	var region = git.Config.Find("filter.lfs.s3.region")
+	var accessKey = git.Config.Find("filter.lfs.s3.accesskey")
+	var secretKey = git.Config.Find("filter.lfs.s3.secretkey")
+	var blobKey = o.Oid
 
-	req, err := o.NewRequest("upload", "PUT")
+	client := s3.New(aws.NewConfig().WithRegion(region).WithCredentials(credentials.NewStaticCredentials(accessKey, secretKey, "")))
+
+	uploader := s3manager.NewUploader(&s3manager.UploadOptions{S3: client})
+	result, err := uploader.Upload(&s3manager.UploadInput{
+		Bucket: &bucket,
+		Key:    &blobKey,
+		Body:   file,
+	})
+
 	if err != nil {
-		return Error(err)
+		return Errorf(err, "Error uploading %s.", blobKey)
 	}
 
-	if len(req.Header.Get("Content-Type")) == 0 {
-		req.Header.Set("Content-Type", "application/octet-stream")
-	}
-
-	if req.Header.Get("Transfer-Encoding") == "chunked" {
-		req.TransferEncoding = []string{"chunked"}
-	} else {
-		req.Header.Set("Content-Length", strconv.FormatInt(o.Size, 10))
-	}
-
-	req.ContentLength = o.Size
-	req.Body = ioutil.NopCloser(reader)
-
-	res, err := doStorageRequest(req)
-	if err != nil {
-		return newRetriableError(err)
-	}
-	LogTransfer("lfs.data.upload", res)
-
-	// A status code of 403 likely means that an authentication token for the
-	// upload has expired. This can be safely retried.
-	if res.StatusCode == 403 {
-		return newRetriableError(err)
-	}
-
-	if res.StatusCode > 299 {
-		return Errorf(nil, "Invalid status for %s %s: %d", req.Method, req.URL, res.StatusCode)
-	}
-
-	io.Copy(ioutil.Discard, res.Body)
-	res.Body.Close()
-
-	if _, ok := o.Rel("verify"); !ok {
-		return nil
-	}
-
-	req, err = o.NewRequest("verify", "POST")
-	if err != nil {
-		return Error(err)
-	}
-
-	by, err := json.Marshal(o)
-	if err != nil {
-		return Error(err)
-	}
-
-	req.Header.Set("Content-Type", mediaType)
-	req.Header.Set("Content-Length", strconv.Itoa(len(by)))
-	req.ContentLength = int64(len(by))
-	req.Body = ioutil.NopCloser(bytes.NewReader(by))
-	res, err = doAPIRequest(req, true)
-	if err != nil {
-		return err
-	}
-
-	LogTransfer("lfs.data.verify", res)
-	io.Copy(ioutil.Discard, res.Body)
-	res.Body.Close()
+	fmt.Fprintf(os.Stderr, "Blob url %s\n", result.Location)
 
 	return err
 }
