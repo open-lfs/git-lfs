@@ -67,7 +67,7 @@ func (a *Attribute) set(key, value string, opt InstallOptions) error {
 	if opt.Local {
 		currentValue = git.Config.FindLocal(key)
 	} else {
-		currentValue = git.Config.FindGlobal(key)
+		currentValue = git.Config.Find(key)
 	}
 
 	if opt.Force || shouldReset(currentValue) {

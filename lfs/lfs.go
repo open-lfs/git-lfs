@@ -8,7 +8,6 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/github/git-lfs/git"
 	"github.com/github/git-lfs/vendor/_nuts/github.com/rubyist/tracerx"
 )
 
@@ -28,7 +27,6 @@ var (
 	LocalGitDir        string // parent of index / config / hooks etc
 	LocalGitStorageDir string // parent of objects/lfs (may be same as LocalGitDir but may not)
 	LocalMediaDir      string // root of lfs objects
-	LocalObjectTempDir string // where temporarily downloading objects are stored
 	LocalLogDir        string
 	checkedTempDir     string
 )
@@ -94,7 +92,7 @@ func Environ() []string {
 }
 
 func InRepo() bool {
-	return LocalGitDir != ""
+	return LocalWorkingDir != ""
 }
 
 func ResolveDirs() {
@@ -113,8 +111,7 @@ func ResolveDirs() {
 			panic(fmt.Errorf("Error trying to create log directory in '%s': %s", LocalLogDir, err))
 		}
 
-		LocalObjectTempDir = filepath.Join(TempDir, "objects")
-		if err := os.MkdirAll(LocalObjectTempDir, tempDirPerms); err != nil {
+		if err := os.MkdirAll(TempDir, tempDirPerms); err != nil {
 			panic(fmt.Errorf("Error trying to create temp directory in '%s': %s", TempDir, err))
 		}
 	}
@@ -148,7 +145,12 @@ func resolveGitDir() (string, string, error) {
 		return processGitDirVar(gitDir, workTree)
 	}
 
-	workTreeR, gitDirR, err := resolveGitDirFromCurrentDir()
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", "", err
+	}
+
+	workTreeR, gitDirR, err := recursiveResolveGitDir(wd)
 	if err != nil {
 		return "", "", err
 	}
@@ -193,19 +195,32 @@ func processWorkTreeVar(gitDir, workTree string) (string, string, error) {
 	return absWorkTree, gitDir, nil
 }
 
-func resolveGitDirFromCurrentDir() (string, string, error) {
-
-	// Get root of the git working dir
-	gitDir, err := git.GitDir()
-	if err != nil {
-		return "", "", err
+func recursiveResolveGitDir(dir string) (string, string, error) {
+	var cleanDir = filepath.Clean(dir)
+	if cleanDir[len(cleanDir)-1] == os.PathSeparator {
+		return "", "", fmt.Errorf("Git repository not found")
 	}
 
-	// Allow this to fail, will do so if GIT_DIR isn't set but GIT_WORK_TREE is rel
-	// Dealt with by parent
-	rootDir, _ := git.RootDir()
+	if filepath.Base(dir) == gitExt {
+		// We're in the `.git` directory.  Make no assumptions about the working directory.
+		return "", dir, nil
+	}
 
-	return rootDir, gitDir, nil
+	gitDir := filepath.Join(dir, gitExt)
+	info, err := os.Stat(gitDir)
+	if err != nil {
+		// Found neither a directory nor a file named `.git`.
+		// Move one directory up.
+		return recursiveResolveGitDir(filepath.Dir(dir))
+	}
+
+	if !info.IsDir() {
+		// Found a file named `.git` (we're in a submodule).
+		return resolveDotGitFile(gitDir)
+	}
+
+	// Found the `.git` directory.
+	return dir, gitDir, nil
 }
 
 func resolveDotGitFile(file string) (string, string, error) {

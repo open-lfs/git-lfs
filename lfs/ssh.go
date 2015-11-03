@@ -1,7 +1,6 @@
 package lfs
 
 import (
-	"bytes"
 	"encoding/json"
 	"os/exec"
 	"path/filepath"
@@ -38,22 +37,12 @@ func sshAuthenticate(endpoint Endpoint, operation, oid string) (sshAuthResponse,
 
 	cmd := exec.Command(exe, args...)
 
-	// Save stdout and stderr in separate buffers
-	var outbuf, errbuf bytes.Buffer
-	cmd.Stdout = &outbuf
-	cmd.Stderr = &errbuf
+	out, err := cmd.CombinedOutput()
 
-	// Execute command
-	err := cmd.Start()
-	if err == nil {
-		err = cmd.Wait()
-	}
-
-	// Processing result
 	if err != nil {
-		res.Message = errbuf.String()
+		res.Message = string(out)
 	} else {
-		err = json.Unmarshal(outbuf.Bytes(), &res)
+		err = json.Unmarshal(out, &res)
 	}
 
 	return res, err

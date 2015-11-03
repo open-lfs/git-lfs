@@ -11,9 +11,7 @@ begin_test "batch transfer"
   # This initializes a new bare git repository in test/remote.
   # These remote repositories are global to every test, so keep the names
   # unique.
-  reponame1="$(basename "$0" ".sh")"
-  reponame2="CAPITALLETTERS"
-  reponame=$reponame1$reponame2
+  reponame="$(basename "$0" ".sh")"
   setup_remote_repo "$reponame"
 
   # Clone the repository from the test Git server.  This is empty, and will be

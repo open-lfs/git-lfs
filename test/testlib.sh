@@ -75,17 +75,11 @@ begin_test () {
     err="$TRASHDIR/err"
     trace="$TRASHDIR/trace"
 
-    exec 1>"$out" 2>"$err" 
-
-    # enabling GIT_TRACE can cause Windows git to stall, esp with fd 5
-    # other fd numbers like 8/9 don't stall but still don't work, so disable
-    if [ $IS_WINDOWS == "0" ]; then
-      exec 5>"$trace"
-      export GIT_TRACE=5
-    fi
+    exec 1>"$out" 2>"$err" 5>"$trace"
 
     # reset global git config
     HOME="$TRASHDIR/home"
+    export GIT_TRACE=5
     rm -rf "$TRASHDIR/home"
     mkdir "$HOME"
     cp "$TESTHOME/.gitconfig" "$HOME/.gitconfig"
@@ -103,8 +97,6 @@ end_test () {
     test_status="${1:-$?}"
     set +x -e
     exec 1>&3 2>&4
-    # close fd 5 (GIT_TRACE)
-    exec 5>&-
 
     if [ "$test_status" -eq 0 ]; then
         printf "test: %-60s OK\n" "$test_description ..."
@@ -117,10 +109,8 @@ end_test () {
             echo "-- stderr --"
             grep -v -e '^\+ end_test' -e '^+ set +x' <"$TRASHDIR/err" |
                 sed 's/^/    /'
-            if [ "$IS_WINDOWS" == "0" ]; then
-                echo "-- git trace --"
-                sed 's/^/   /' <"$TRASHDIR/trace"
-            fi
+            echo "-- git trace --"
+            sed 's/^/   /' <"$TRASHDIR/trace"
         ) 1>&2
         echo
     fi

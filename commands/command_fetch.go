@@ -28,17 +28,12 @@ func fetchCommand(cmd *cobra.Command, args []string) {
 
 	if len(args) > 0 {
 		// Remote is first arg
-		if err := git.ValidateRemote(args[0]); err != nil {
-			Exit("Invalid remote name %q", args[0])
-		}
 		lfs.Config.CurrentRemote = args[0]
 	} else {
-		// Actively find the default remote, don't just assume origin
-		defaultRemote, err := git.DefaultRemote()
-		if err != nil {
-			Exit("No default remote")
-		}
-		lfs.Config.CurrentRemote = defaultRemote
+		trackedRemote, err := git.CurrentRemote()
+		if err == nil {
+			lfs.Config.CurrentRemote = trackedRemote
+		} // otherwise leave as default (origin)
 	}
 
 	if len(args) > 1 {
@@ -57,7 +52,6 @@ func fetchCommand(cmd *cobra.Command, args []string) {
 		refs = []*git.Ref{ref}
 	}
 
-	success := true
 	if fetchAllArg {
 		if fetchRecentArg || len(args) > 1 {
 			Exit("Cannot combine --all with ref arguments or --recent")
@@ -68,7 +62,7 @@ func fetchCommand(cmd *cobra.Command, args []string) {
 		if len(lfs.Config.FetchIncludePaths()) > 0 || len(lfs.Config.FetchExcludePaths()) > 0 {
 			Print("Ignoring global include / exclude paths to fulfil --all")
 		}
-		success = fetchAll()
+		fetchAll()
 
 	} else { // !all
 		includePaths, excludePaths := determineIncludeExcludePaths(fetchIncludeArg, fetchExcludeArg)
@@ -76,18 +70,12 @@ func fetchCommand(cmd *cobra.Command, args []string) {
 		// Fetch refs sequentially per arg order; duplicates in later refs will be ignored
 		for _, ref := range refs {
 			Print("Fetching %v", ref.Name)
-			s := fetchRef(ref.Sha, includePaths, excludePaths)
-			success = success && s
+			fetchRef(ref.Sha, includePaths, excludePaths)
 		}
 
 		if fetchRecentArg || lfs.Config.FetchPruneConfig().FetchRecentAlways {
-			s := fetchRecent(refs, includePaths, excludePaths)
-			success = success && s
+			fetchRecent(refs, includePaths, excludePaths)
 		}
-	}
-
-	if !success {
-		Exit("Warning: errors occurred")
 	}
 }
 
@@ -118,33 +106,32 @@ func fetchRefToChan(ref string, include, exclude []string) chan *lfs.WrappedPoin
 }
 
 // Fetch all binaries for a given ref (that we don't have already)
-func fetchRef(ref string, include, exclude []string) bool {
+func fetchRef(ref string, include, exclude []string) {
 	pointers, err := pointersToFetchForRef(ref)
 	if err != nil {
 		Panic(err, "Could not scan for Git LFS files")
 	}
-	return fetchPointers(pointers, include, exclude)
+	fetchPointers(pointers, include, exclude)
 }
 
 // Fetch all previous versions of objects from since to ref (not including final state at ref)
 // So this will fetch all the '-' sides of the diff from since to ref
-func fetchPreviousVersions(ref string, since time.Time, include, exclude []string) bool {
+func fetchPreviousVersions(ref string, since time.Time, include, exclude []string) {
 	pointers, err := lfs.ScanPreviousVersions(ref, since)
 	if err != nil {
 		Panic(err, "Could not scan for Git LFS previous versions")
 	}
-	return fetchPointers(pointers, include, exclude)
+	fetchPointers(pointers, include, exclude)
 }
 
 // Fetch recent objects based on config
-func fetchRecent(alreadyFetchedRefs []*git.Ref, include, exclude []string) bool {
+func fetchRecent(alreadyFetchedRefs []*git.Ref, include, exclude []string) {
 	fetchconf := lfs.Config.FetchPruneConfig()
 
 	if fetchconf.FetchRecentRefsDays == 0 && fetchconf.FetchRecentCommitsDays == 0 {
-		return true
+		return
 	}
 
-	ok := true
 	// Make a list of what unique commits we've already fetched for to avoid duplicating work
 	uniqueRefShas := make(map[string]string, len(alreadyFetchedRefs))
 	for _, ref := range alreadyFetchedRefs {
@@ -167,8 +154,7 @@ func fetchRecent(alreadyFetchedRefs []*git.Ref, include, exclude []string) bool 
 			} else {
 				uniqueRefShas[ref.Sha] = ref.Name
 				Print("Fetching %v", ref.Name)
-				k := fetchRef(ref.Sha, include, exclude)
-				ok = ok && k
+				fetchRef(ref.Sha, include, exclude)
 			}
 		}
 	}
@@ -183,18 +169,16 @@ func fetchRecent(alreadyFetchedRefs []*git.Ref, include, exclude []string) bool 
 			}
 			Print("Fetching changes within %v days of %v", fetchconf.FetchRecentCommitsDays, refName)
 			commitsSince := summ.CommitDate.AddDate(0, 0, -fetchconf.FetchRecentCommitsDays)
-			k := fetchPreviousVersions(commit, commitsSince, include, exclude)
-			ok = ok && k
+			fetchPreviousVersions(commit, commitsSince, include, exclude)
 		}
 
 	}
-	return ok
 }
 
-func fetchAll() bool {
+func fetchAll() {
 	pointers := scanAll()
 	Print("Fetching objects...")
-	return fetchPointers(pointers, nil, nil)
+	fetchPointers(pointers, nil, nil)
 }
 
 func scanAll() []*lfs.WrappedPointer {
@@ -223,13 +207,12 @@ func scanAll() []*lfs.WrappedPointer {
 	return pointers
 }
 
-func fetchPointers(pointers []*lfs.WrappedPointer, include, exclude []string) bool {
-	return fetchAndReportToChan(pointers, include, exclude, nil)
+func fetchPointers(pointers []*lfs.WrappedPointer, include, exclude []string) {
+	fetchAndReportToChan(pointers, include, exclude, nil)
 }
 
 // Fetch and report completion of each OID to a channel (optional, pass nil to skip)
-// Returns true if all completed with no errors, false if errors were written to stderr/log
-func fetchAndReportToChan(pointers []*lfs.WrappedPointer, include, exclude []string, out chan<- *lfs.WrappedPointer) bool {
+func fetchAndReportToChan(pointers []*lfs.WrappedPointer, include, exclude []string, out chan<- *lfs.WrappedPointer) {
 
 	totalSize := int64(0)
 	for _, p := range pointers {
@@ -290,14 +273,11 @@ func fetchAndReportToChan(pointers []*lfs.WrappedPointer, include, exclude []str
 	q.Wait()
 	tracerx.PerformanceSince("process queue", processQueue)
 
-	ok := true
 	for _, err := range q.Errors() {
-		ok = false
 		if Debugging || lfs.IsFatalError(err) {
 			LoggedError(err, err.Error())
 		} else {
 			Error(err.Error())
 		}
 	}
-	return ok
 }

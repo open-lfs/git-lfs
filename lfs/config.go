@@ -182,13 +182,13 @@ func (c *Configuration) SetEndpointAccess(e Endpoint, authType string) {
 		git.Config.UnsetLocalKey("", key)
 
 		c.loading.Lock()
-		delete(c.gitConfig, strings.ToLower(key))
+		delete(c.gitConfig, key)
 		c.loading.Unlock()
 	default:
 		git.Config.SetLocal("", key, authType)
 
 		c.loading.Lock()
-		c.gitConfig[strings.ToLower(key)] = authType
+		c.gitConfig[key] = authType
 		c.loading.Unlock()
 	}
 }
@@ -301,9 +301,12 @@ func (c *Configuration) loadGitConfig() bool {
 		return false
 	}
 
+	uniqRemotes := make(map[string]bool)
+
 	c.gitConfig = make(map[string]string)
 	c.extensions = make(map[string]Extension)
 
+	var output string
 	listOutput, err := git.Config.List()
 	if err != nil {
 		panic(fmt.Errorf("Error listing git config: %s", err))
@@ -312,85 +315,48 @@ func (c *Configuration) loadGitConfig() bool {
 	configFile := filepath.Join(LocalWorkingDir, ".gitconfig")
 	fileOutput, err := git.Config.ListFromFile(configFile)
 	if err != nil {
-		panic(fmt.Errorf("Error listing git config from %s: %s", configFile, err))
+		panic(fmt.Errorf("Error listing git config from file: %s", err))
 	}
 
 	localConfig := filepath.Join(LocalGitDir, "config")
 	localOutput, err := git.Config.ListFromFile(localConfig)
 	if err != nil {
-		panic(fmt.Errorf("Error listing git config from %s: %s", localConfig, err))
+		panic(fmt.Errorf("Error listing git config from file %s", err))
 	}
 
-	uniqRemotes := make(map[string]bool)
-	c.readGitConfig(fileOutput, uniqRemotes, true)
-	c.readGitConfig(listOutput, uniqRemotes, false)
-	c.readGitConfig(localOutput, uniqRemotes, false)
+	output = fileOutput + "\n" + listOutput + "\n" + localOutput
 
-	c.remotes = make([]string, 0, len(uniqRemotes))
-	for remote, isOrigin := range uniqRemotes {
-		if isOrigin {
-			continue
-		}
-		c.remotes = append(c.remotes, remote)
-	}
-
-	return true
-}
-
-func (c *Configuration) readGitConfig(output string, uniqRemotes map[string]bool, onlySafe bool) {
 	lines := strings.Split(output, "\n")
 	for _, line := range lines {
 		pieces := strings.SplitN(line, "=", 2)
 		if len(pieces) < 2 {
 			continue
 		}
-
-		allowed := !onlySafe
 		key := strings.ToLower(pieces[0])
 		value := pieces[1]
+		c.gitConfig[key] = value
 
 		keyParts := strings.Split(key, ".")
-		if len(keyParts) == 4 && keyParts[0] == "lfs" && keyParts[1] == "extension" {
+		if len(keyParts) > 1 && keyParts[0] == "remote" {
+			remote := keyParts[1]
+			uniqRemotes[remote] = remote == "origin"
+		} else if len(keyParts) == 4 && keyParts[0] == "lfs" && keyParts[1] == "extension" {
 			name := keyParts[2]
 			ext := c.extensions[name]
 			switch keyParts[3] {
 			case "clean":
-				if onlySafe {
-					continue
-				}
 				ext.Clean = value
 			case "smudge":
-				if onlySafe {
-					continue
-				}
 				ext.Smudge = value
 			case "priority":
-				allowed = true
 				p, err := strconv.Atoi(value)
 				if err == nil && p >= 0 {
 					ext.Priority = p
 				}
 			}
-
 			ext.Name = name
 			c.extensions[name] = ext
-		} else if len(keyParts) > 1 && keyParts[0] == "remote" {
-			if onlySafe && (len(keyParts) == 3 && keyParts[2] != "lfsurl") {
-				continue
-			}
-
-			allowed = true
-			remote := keyParts[1]
-			uniqRemotes[remote] = remote == "origin"
-		}
-
-		if !allowed && key != "lfs.url" {
-			continue
-		}
-
-		c.gitConfig[key] = value
-
-		if len(keyParts) == 2 && keyParts[0] == "lfs" && keyParts[1] == "fetchinclude" {
+		} else if len(keyParts) == 2 && keyParts[0] == "lfs" && keyParts[1] == "fetchinclude" {
 			for _, inc := range strings.Split(value, ",") {
 				inc = strings.TrimSpace(inc)
 				c.fetchIncludePaths = append(c.fetchIncludePaths, inc)
@@ -402,4 +368,14 @@ func (c *Configuration) readGitConfig(output string, uniqRemotes map[string]bool
 			}
 		}
 	}
+
+	c.remotes = make([]string, 0, len(uniqRemotes))
+	for remote, isOrigin := range uniqRemotes {
+		if isOrigin {
+			continue
+		}
+		c.remotes = append(c.remotes, remote)
+	}
+
+	return true
 }

@@ -30,6 +30,7 @@ $ script/test lfs -run TestSuccessStatus -v
 github.com/kr/text
 github.com/cheggaaa/pb
 github.com/rubyist/tracerx
+github.com/technoweenie/go-contentaddressable
 github.com/kr/pretty
 github.com/github/git-lfs/git
 github.com/technoweenie/assert
