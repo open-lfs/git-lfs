@@ -14,8 +14,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	
 	"github.com/github/git-lfs/git"
-	
-	contentaddressable "github.com/github/git-lfs/vendor/_nuts/github.com/technoweenie/go-contentaddressable"
 )
 
 func PointerSmudgeToFile(filename string, ptr *Pointer, download bool, cb CopyCallback) error {
@@ -56,7 +54,7 @@ func PointerSmudge(writer io.Writer, ptr *Pointer, workingfile string, download 
 
 	if statErr != nil || stat == nil {
 		if download {
-			err = downloadFile(writer, ptr, workingfile, mediafile, cb)
+			err = downloadWorkingCopy(writer, ptr, workingfile, mediafile, cb)
 		} else {
 			return newDownloadDeclinedError(nil)
 		}
@@ -90,7 +88,7 @@ func PointerSmudgeObject(ptr *Pointer, obj *objectResource, cb CopyCallback) err
 	}
 
 	if statErr != nil || stat == nil {
-		err := downloadObject(ptr, obj, mediafile, cb)
+		err := downloadFile(ptr, mediafile, cb)
 
 		if err != nil {
 			return newSmudgeError(err, obj.Oid, mediafile)
@@ -100,43 +98,15 @@ func PointerSmudgeObject(ptr *Pointer, obj *objectResource, cb CopyCallback) err
 	return nil
 }
 
-func downloadObject(ptr *Pointer, obj *objectResource, mediafile string, cb CopyCallback) error {
-	reader, size, err := DownloadObject(obj)
-	if reader != nil {
-		defer reader.Close()
-	}
-
-	// TODO this can be unified with the same code in downloadFile
-	if err != nil {
-		return Errorf(err, "Error downloading %s", mediafile)
-	}
-
-	if ptr.Size == 0 {
-		ptr.Size = size
-	}
-
-	mediaFile, err := contentaddressable.NewFile(mediafile)
-	if err != nil {
-		return Errorf(err, "Error opening media file buffer.")
-	}
-
-	_, err = CopyWithCallback(mediaFile, reader, ptr.Size, cb)
-	if err == nil {
-		err = mediaFile.Accept()
-	}
-	mediaFile.Close()
-
-	if err != nil {
-		return Errorf(err, "Error buffering media file.")
-	}
-
-	return nil
-}
-
-func downloadFile(writer io.Writer, ptr *Pointer, workingfile, mediafile string, cb CopyCallback) error {
+func downloadWorkingCopy(writer io.Writer, ptr *Pointer, workingfile, mediafile string, cb CopyCallback) error {
 	
 	fmt.Fprintf(os.Stderr, "Downloading %s ... (%s)\n", workingfile, pb.FormatBytes(ptr.Size))
+	downloadFile(ptr, mediafile, cb);
 
+	return readLocalFile(writer, ptr, mediafile, workingfile, nil)
+}
+
+func downloadFile(ptr *Pointer, mediafile string, cb CopyCallback) error {
 	mediaFile, err := os.Create(mediafile)
 	if err != nil {
 		return Errorf(err, "Error creating  %s.", mediafile)
@@ -168,8 +138,8 @@ func downloadFile(writer io.Writer, ptr *Pointer, workingfile, mediafile string,
 	if ptr.Size == 0 {
 		ptr.Size = size
 	}
-
-	return readLocalFile(writer, ptr, mediafile, workingfile, nil)
+	
+	return nil
 }
 
 func readLocalFile(writer io.Writer, ptr *Pointer, mediafile string, workingfile string, cb CopyCallback) error {

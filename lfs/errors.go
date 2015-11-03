@@ -189,19 +189,6 @@ func IsDownloadDeclinedError(err error) bool {
 	return false
 }
 
-// IsRetriableError indicates the low level transfer had an error but the
-// caller may retry the operation.
-func IsRetriableError(err error) bool {
-	if e, ok := err.(interface {
-		RetriableError() bool
-	}); ok {
-		return e.RetriableError()
-	}
-	if e, ok := err.(errorWrapper); ok {
-		return IsRetriableError(e.InnerError())
-	}
-	return false
-}
 
 // Error wraps an error with an empty message.
 func Error(err error) error {

@@ -78,7 +78,6 @@ func Environ() []string {
 		fmt.Sprintf("LocalMediaDir=%s", LocalMediaDir),
 		fmt.Sprintf("TempDir=%s", TempDir),
 		fmt.Sprintf("ConcurrentTransfers=%d", Config.ConcurrentTransfers()),
-		fmt.Sprintf("BatchTransfer=%v", Config.BatchTransfer()),
 	)
 
 	for _, e := range osEnviron {

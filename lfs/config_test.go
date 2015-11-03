@@ -279,36 +279,6 @@ func TestConcurrentTransfersNegativeValue(t *testing.T) {
 	assert.Equal(t, 3, n)
 }
 
-func TestBatch(t *testing.T) {
-	tests := map[string]bool{
-		"":         true,
-		"true":     true,
-		"1":        true,
-		"42":       false,
-		"-1":       false,
-		"0":        false,
-		"false":    false,
-		"elephant": false,
-	}
-
-	for value, expected := range tests {
-		config := &Configuration{
-			gitConfig: map[string]string{"lfs.batch": value},
-		}
-
-		if actual := config.BatchTransfer(); actual != expected {
-			t.Errorf("lfs.batch %q == %v, not %v", value, actual, expected)
-		}
-	}
-}
-
-func TestBatchAbsentIsTrue(t *testing.T) {
-	config := &Configuration{}
-
-	v := config.BatchTransfer()
-	assert.Equal(t, true, v)
-}
-
 func TestAccessConfig(t *testing.T) {
 	type accessTest struct {
 		Access        string

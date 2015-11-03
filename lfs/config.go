@@ -127,19 +127,6 @@ func (c *Configuration) ConcurrentTransfers() int {
 	return uploads
 }
 
-func (c *Configuration) BatchTransfer() bool {
-	value, ok := c.GitConfig("lfs.batch")
-	if !ok || len(value) == 0 {
-		return true
-	}
-
-	useBatch, err := parseConfigBool(value)
-	if err != nil {
-		return false
-	}
-
-	return useBatch
-}
 
 // PrivateAccess will retrieve the access value and return true if
 // the value is set to private. When a repo is marked as having private

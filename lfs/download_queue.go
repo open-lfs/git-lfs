@@ -10,10 +10,6 @@ func NewDownloadCheckable(p *WrappedPointer) *DownloadCheckable {
 	return &DownloadCheckable{Pointer: p}
 }
 
-func (d *DownloadCheckable) Check() (*objectResource, error) {
-	return DownloadCheck(d.Pointer.Oid)
-}
-
 func (d *DownloadCheckable) Transfer(cb CopyCallback) error {
 	// just report completion of check but don't do anything
 	cb(d.Size(), d.Size(), int(d.Size()))

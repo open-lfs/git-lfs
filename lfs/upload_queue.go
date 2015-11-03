@@ -37,17 +37,13 @@ func NewUploadable(oid, filename string) (*Uploadable, error) {
 	return &Uploadable{oid: oid, OidPath: localMediaPath, Filename: filename, size: fi.Size()}, nil
 }
 
-func (u *Uploadable) Check() (*objectResource, error) {
-	return UploadCheck(u.OidPath)
-}
-
 func (u *Uploadable) Transfer(cb CopyCallback) error {
 	wcb := func(total, read int64, current int) error {
 		cb(total, read, current)
 		return nil
 	}
 
-	return UploadObject(u.object, wcb)
+	return UploadObject(u.oid, wcb)
 }
 
 func (u *Uploadable) Object() *objectResource {
