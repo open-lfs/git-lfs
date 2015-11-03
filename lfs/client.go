@@ -119,6 +119,18 @@ func UploadObject(oid string, cb CopyCallback) error {
 
 	client := s3.New(aws.NewConfig().WithRegion(region).WithCredentials(credentials.NewStaticCredentials(accessKey, secretKey, "")))
 
+	headParams := &s3.HeadObjectInput{
+		Bucket: &bucket,
+		Key: &blobKey,
+	}
+	resp, err := client.HeadObject(headParams)
+
+	if err == nil && resp != nil {
+		// the object already exist
+		fmt.Fprintf(os.Stderr, "Skipped blob %s since it was already uploaded\n", blobKey)
+		return err
+	}
+	
 	uploader := s3manager.NewUploader(&s3manager.UploadOptions{S3: client})
 	result, err := uploader.Upload(&s3manager.UploadInput{
 		Bucket: &bucket,
@@ -134,7 +146,6 @@ func UploadObject(oid string, cb CopyCallback) error {
 
 	return err
 }
-
 
 
 func defaultError(res *http.Response) error {
